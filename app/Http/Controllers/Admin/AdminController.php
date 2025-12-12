@@ -17,7 +17,7 @@ class AdminController extends Controller
     {
         $totalUsers = User::count();
         $totalFiles = File::count();
-        $totalStorage = File::sum('file_size');
+        $totalStorage = File::sum('size');  // ← GANTI dari 'file_size' ke 'size'
         $recentFiles = File::with('user')->latest()->take(10)->get();
 
         return view('admin.dashboard', compact('totalUsers', 'totalFiles', 'totalStorage', 'recentFiles'));
@@ -33,7 +33,7 @@ class AdminController extends Controller
     // Delete File (Admin)
     public function deleteFile(File $file)
     {
-        Storage::disk('public')->delete($file->file_path);
+        Storage::disk('public')->delete($file->path);  // ← GANTI dari 'file_path' ke 'path'
         $file->delete();
 
         return back()->with('success', 'File deleted successfully!');
@@ -114,7 +114,7 @@ class AdminController extends Controller
 
         // Delete all user's files
         foreach ($user->files as $file) {
-            Storage::disk('public')->delete($file->file_path);
+            Storage::disk('public')->delete($file->path);  // ← GANTI dari 'file_path' ke 'path'
         }
 
         $user->delete();

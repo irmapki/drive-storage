@@ -4,112 +4,158 @@ namespace App\Http\Controllers\User;
 
 use App\Http\Controllers\Controller;
 use App\Models\File;
+use App\Models\Favorite;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 
 class FileController extends Controller
 {
-    // Dashboard - My Files
-    public function index()
+    /**
+     * Display a listing of user's files
+     */
+    public function index(Request $request)
     {
-        $files = auth()->user()->files()->latest()->get();
-        $totalFiles = $files->count();
-        $totalSize = $files->sum('file_size');
-        
-        return view('user.files.index', compact('files', 'totalFiles', 'totalSize'));
+        $query = File::where('user_id', Auth::id())
+            ->with('favorites');
+
+        // Filter by type if provided
+        if ($request->has('type') && in_array($request->type, ['image', 'document'])) {
+            $query->where('plain_type', $request->type);
+        }
+
+        $files = $query->latest()->paginate(12);
+
+        return view('user.files.index', compact('files'));
     }
 
-    // Upload Form
+    /**
+     * Show the form for uploading a new file
+     */
     public function create()
     {
-        return view('user.files.upload');
+        return view('user.files.create');
     }
 
-    // Store Uploaded File
+    /**
+     * Store a newly uploaded file
+     */
     public function store(Request $request)
     {
         $request->validate([
-            'file' => 'required|file|max:51200', // Max 50MB
+            'file' => 'required|file|max:10240', // 10MB max
+            'plain_type' => 'required|in:image,document',
         ]);
 
-        if ($request->hasFile('file')) {
-            $uploadedFile = $request->file('file');
-            
-            // Generate unique filename
-            $originalName = $uploadedFile->getClientOriginalName();
-            $extension = $uploadedFile->getClientOriginalExtension();
-            $storedName = Str::uuid() . '.' . $extension;
-            
-            // Store file
-            $path = $uploadedFile->storeAs('uploads', $storedName, 'public');
-            
-            // Save to database
-            File::create([
-                'user_id' => auth()->id(),
-                'original_name' => $originalName,
-                'stored_name' => $storedName,
-                'file_type' => $extension,
-                'mime_type' => $uploadedFile->getMimeType(),
-                'file_size' => $uploadedFile->getSize(),
-                'file_path' => $path,
+        $uploadedFile = $request->file('file');
+        
+        // Validate file type based on plain_type
+        if ($request->plain_type === 'image') {
+            $request->validate([
+                'file' => 'mimes:jpg,jpeg,png,gif,webp'
             ]);
-
-            return redirect()->route('user.files.index')
-                ->with('success', 'File uploaded successfully!');
+        } else {
+            $request->validate([
+                'file' => 'mimes:pdf,doc,docx,xls,xlsx,txt'
+            ]);
         }
 
-        return back()->with('error', 'No file uploaded!');
+        // Store file
+        $path = $uploadedFile->store('uploads/' . Auth::id(), 'public');
+
+        // Create file record
+        File::create([
+            'user_id' => Auth::id(),
+            'name' => $uploadedFile->getClientOriginalName(),
+            'path' => $path,
+            'size' => $uploadedFile->getSize(),
+            'type' => $uploadedFile->getMimeType(),
+            'plain_type' => $request->plain_type,
+        ]);
+
+        return redirect()->route('user.files.index')->with('success', 'File uploaded successfully!');
     }
 
-    // Download File
+    /**
+     * Download a file
+     */
     public function download(File $file)
     {
-        // Check if user owns the file
-        if ($file->user_id !== auth()->id()) {
+        // Ensure the file belongs to the authenticated user
+        if ($file->user_id !== Auth::id()) {
             abort(403, 'Unauthorized action.');
         }
 
-        return Storage::disk('public')->download($file->file_path, $file->original_name);
+        if (!Storage::disk('public')->exists($file->path)) {
+            return redirect()->back()->with('error', 'File not found.');
+        }
+
+        return Storage::disk('public')->download($file->path, $file->name);
     }
 
-    // Delete File
+    /**
+     * Remove the specified file
+     */
     public function destroy(File $file)
     {
-        // Check if user owns the file
-        if ($file->user_id !== auth()->id()) {
+        // Ensure the file belongs to the authenticated user
+        if ($file->user_id !== Auth::id()) {
             abort(403, 'Unauthorized action.');
         }
 
-        // Delete from storage
-        Storage::disk('public')->delete($file->file_path);
-        
-        // Delete from database
+        // Delete file from storage
+        if (Storage::disk('public')->exists($file->path)) {
+            Storage::disk('public')->delete($file->path);
+        }
+
+        // Delete favorites associated with this file
+        $file->favorites()->delete();
+
+        // Delete file record from database
         $file->delete();
 
-        return redirect()->route('user.files.index')
-            ->with('success', 'File deleted successfully!');
+        return redirect()->back()->with('success', 'File deleted successfully!');
     }
 
-    // Toggle Favorite
+    /**
+     * Toggle favorite status for a file
+     */
     public function toggleFavorite(File $file)
     {
-        if ($file->user_id !== auth()->id()) {
+        // Ensure the file belongs to the authenticated user
+        if ($file->user_id !== Auth::id()) {
             abort(403, 'Unauthorized action.');
         }
 
-        $file->update([
-            'is_favorite' => !$file->is_favorite
-        ]);
+        $favorite = Favorite::where([
+            'user_id' => Auth::id(),
+            'file_id' => $file->id
+        ])->first();
 
-        return back()->with('success', 'Favorite status updated!');
+        if ($favorite) {
+            $favorite->delete();
+            $message = 'File removed from favorites!';
+        } else {
+            Favorite::create([
+                'user_id' => Auth::id(),
+                'file_id' => $file->id
+            ]);
+            $message = 'File added to favorites!';
+        }
+
+        return redirect()->back()->with('success', $message);
     }
 
-    // Favorites Page
+    /**
+     * Display user's favorite files
+     */
     public function favorites()
     {
-        $files = auth()->user()->files()->where('is_favorite', true)->latest()->get();
-        
-        return view('user.files.favorites', compact('files'));
+        $favorites = Favorite::where('user_id', Auth::id())
+            ->with('file')
+            ->latest()
+            ->paginate(12);
+
+        return view('user.files.favorites', compact('favorites'));
     }
 }

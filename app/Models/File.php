@@ -9,6 +9,9 @@ class File extends Model
 {
     use HasFactory;
 
+    /**
+     * Isi kolom yang boleh diisi mass-assignment
+     */
     protected $fillable = [
         'user_id',
         'original_name',
@@ -20,20 +23,46 @@ class File extends Model
         'is_favorite',
     ];
 
+    /**
+     * Casting kolom
+     */
     protected $casts = [
         'is_favorite' => 'boolean',
     ];
 
-    // Relasi ke user
+    /**
+     * Relasi ke User
+     */
     public function user()
     {
         return $this->belongsTo(User::class);
     }
 
-    // Helper untuk format ukuran file
+    /**
+     * Relasi ke Favorite (jika pakai tabel favorites)
+     */
+    public function favorites()
+    {
+        return $this->hasMany(Favorite::class);
+    }
+
+    /**
+     * Cek apakah file disukai user saat ini
+     */
+    public function isFavorite()
+    {
+        return $this->favorites()
+            ->where('user_id', auth()->id())
+            ->exists();
+    }
+
+    /**
+     * Format ukuran file
+     */
     public function getFormattedSizeAttribute()
     {
         $size = $this->file_size;
+
         if ($size < 1024) {
             return $size . ' B';
         } elseif ($size < 1048576) {
@@ -45,7 +74,9 @@ class File extends Model
         }
     }
 
-    // Helper untuk icon berdasarkan tipe file
+    /**
+     * Icon berdasarkan tipe file
+     */
     public function getFileIconAttribute()
     {
         $imageTypes = ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'];
@@ -53,16 +84,18 @@ class File extends Model
         $spreadsheetTypes = ['xls', 'xlsx', 'csv'];
         $archiveTypes = ['zip', 'rar', '7z', 'tar'];
 
-        if (in_array(strtolower($this->file_type), $imageTypes)) {
+        $type = strtolower($this->file_type);
+
+        if (in_array($type, $imageTypes)) {
             return 'image';
-        } elseif (in_array(strtolower($this->file_type), $documentTypes)) {
+        } elseif (in_array($type, $documentTypes)) {
             return 'document';
-        } elseif (in_array(strtolower($this->file_type), $spreadsheetTypes)) {
+        } elseif (in_array($type, $spreadsheetTypes)) {
             return 'spreadsheet';
-        } elseif (in_array(strtolower($this->file_type), $archiveTypes)) {
+        } elseif (in_array($type, $archiveTypes)) {
             return 'archive';
-        } else {
-            return 'file';
         }
+
+        return 'file';
     }
 }
